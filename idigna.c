@@ -145,7 +145,6 @@ size_t get_socket_index(int sock) {
 	// None found, return index of last element + 1
 	return number_sockets;
 }
-
 void add_connection(int sock) {
 	// Grow the table of connections
 	size_t index = number_connections++;
@@ -770,6 +769,21 @@ void handle_connection(size_t index) {
 	}
 }
 
+void drop_privileges(void) {
+	uid_t uid = getuid();
+	gid_t gid = getgid();
+
+	if(setresgid(gid, gid, gid) != 0) {
+		perror("setresgid");
+		exit(1);
+	}
+	if(setresuid(uid, uid, uid) != 0) {
+		perror("setresuid");
+		exit(1);
+	}
+}
+
+
 int main(int argc, char **argv) {
 	long int server_port = 1234;
 
@@ -854,6 +868,9 @@ int main(int argc, char **argv) {
 
 	// Populate the table of sockets with all possible sockets to listen on
 	setup_listen(server_port);
+
+	// Drop privileges or die trying
+	drop_privileges();
 
 	// Poll
 	while(1) {
