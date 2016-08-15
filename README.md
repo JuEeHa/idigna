@@ -8,4 +8,4 @@ Usage
 -----
 idigna [--port|-p server_port] remote [remote_port]
 
-Binds on server_port (default 1234), and connects to remote:remote_port (default 70).
+Binds on server_port (default 80), and connects to remote:remote_port (default 70).

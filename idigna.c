@@ -14,6 +14,8 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
+long int server_port = 80;
+
 const char default_itemtype = '0'; // Default to text file
 const char *default_mimetype = "application/octet-stream"; // Default to binary mime-type
 
@@ -785,8 +787,6 @@ void drop_privileges(void) {
 
 
 int main(int argc, char **argv) {
-	long int server_port = 1234;
-
 	// Store proram name for later use
 	if(argc < 1) {
 		fprintf(stderr, "Missing program name\n");
