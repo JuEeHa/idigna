@@ -707,6 +707,7 @@ void handle_connection(size_t index) {
 	
 	if(conn->state == WRITE) {
 		ssize_t amount;
+		ssize_t skipped = 0;
 
 		if(conn->copymode == GOPHERMAP) {
 			fprintf(stderr, "Gophermap copymode not yet supported, substituting text copymode\n");
@@ -725,6 +726,7 @@ void handle_connection(size_t index) {
 				// Remove the double period in the beginning of line
 				start++;
 				max_left--;
+				skipped += 1;
 			} else if(conn->beginning_of_line && max_left >= 3 && memcmp(start, ".\r\n", 3) == 0) {
 				// Close connection
 				remove_connection(index);
@@ -754,7 +756,7 @@ void handle_connection(size_t index) {
 			return;
 		}
 
-		conn->written += amount;
+		conn->written += amount + skipped;
 
 		if(conn->written >= conn->read) {
 			// Switch socket and change to read mode
