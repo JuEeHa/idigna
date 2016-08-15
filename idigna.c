@@ -423,19 +423,29 @@ const char *get_mimetype(char itemtype, const char *selector, size_t selector_le
 
 	// Special handling for itemtypes I and s
 	if(itemtype == 'I' || itemtype == 's') {
-		const char *extension = memrchr(selector, '.', selector_length);
+		char *extension = memrchr(selector, '.', selector_length);
+		ssize_t extension_legth = selector_length - (extension - selector);
 		if(extension == NULL) {
 			// There is no extension, everything is a lie
 			return default_mimetype;
 		}
 
+		// Create a C string from the buffer + length
+		extension = strndup(extension, extension_legth);
+		if(extension == NULL) {
+			perror("strndup");
+			exit(1);
+		}
+
 		for(size_t i = 0; i < sizeof(extension_mimetypes) / sizeof(*extension_mimetypes); i++) {
 			if(strcmp(extension, extension_mimetypes[i].ext) == 0) {
+				free(extension);
 				return extension_mimetypes[i].mimetype;
 			}
 		}
 
 		// Unrecognised extension
+		free(extension);
 		return default_mimetype;
 	}
 
