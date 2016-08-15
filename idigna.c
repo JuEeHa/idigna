@@ -1,3 +1,5 @@
+#define _GNU_SOURCE // For memrchr
+
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +14,27 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
+const char default_itemtype = '0'; // Default to text file
+const char *default_mimetype = "application/octet-stream"; // Default to binary mime-type
+
+struct { char itemtype; const char *mimetype; } mimetypes[] = {
+	{'0', "text/plain; charset=utf-8"}, // Text file
+	{'4', "application/binhex"}, // BinHex archive
+	{'5', "application/octet-stream"}, //Binary archive
+	{'6', "text/x-uuencode"}, // UUEncoded file
+	{'9', "application/octet-stream"}, // Binary file
+	{'g', "image/gif"}, // GIF image
+	{'h', "text/html; charset=utf-8"}, // HTML document
+};
+
+struct { const char *ext; const char *mimetype; } extension_mimetypes[] = {
+	{".jpg", "image/jpeg"},
+	{".jpeg", "image/jpeg"},
+	{".png", "image/png"},
+	{".wav", "audio/wav"},
+	{".mp3", "audio/mpeg"}
+};
+
 const char *program_name;
 const char *remote;
 long int remote_port = 70;
@@ -21,17 +44,26 @@ struct pollfd *sockets = NULL;
 size_t number_sockets = 0;
 size_t number_interfaces = 0;
 
-enum connection_state { START, PATH, REQUEST_END, CONNECT, REQUEST_WRITE, READ, WRITE };
+enum connection_state { START, PATH, REQUEST_END, CONNECT, REQUEST_WRITE, HEADER_WRITE, READ, WRITE };
+enum copymode { TEXT, BINARY, GOPHERMAP };
 struct connection {
 	enum connection_state state;
+
 	int sock;
+	int sock_other;
+
 	char *path;
 	size_t path_size;
+
+	char itemtype;
+	enum copymode copymode;
+
 	char *buffer;
 	size_t buffer_size;
-	int sock_other;
+
 	size_t written;
 	size_t read;
+	bool beginning_of_line;
 };
 
 struct connection **connections = NULL;
@@ -163,6 +195,8 @@ void remove_connection(size_t index) {
 		free(connections[index]->buffer);
 	}
 
+	printf("all cleaned\n");
+
 	if(index != number_connections - 1) {
 		// The connection was not at the end of the table -> we need to rearrange to allow shrinking of allocation
 		memmove(&connections[index], &connections[number_connections - 1], sizeof(*connections));
@@ -273,6 +307,7 @@ int connect_to_remote(void) {
 
 	// AF_UNSPEC: either IPv4 or IPv6
 	// SOCK_STREAM: TCP
+	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
@@ -315,7 +350,7 @@ void buffer_append(char **buffer, size_t *buffer_length, char *appended, size_t 
 	*buffer_length = *buffer_length + appended_length;
 }
 
-void *memdup(void *mem, size_t size) {
+void *memdup(const void *mem, size_t size) {
 	void *dup = malloc(size);
 	if(dup == NULL && size != 0) {
 		perror("malloc");
@@ -323,6 +358,12 @@ void *memdup(void *mem, size_t size) {
 	}
 	memmove(dup, mem, size);
 	return dup;
+}
+
+void switch_sockets(struct connection *conn) {
+	int tmp = conn->sock_other;
+	conn->sock_other = conn->sock;
+	conn->sock = tmp;
 }
 
 void socket_change(int old, int new, short events) {
@@ -333,6 +374,86 @@ void socket_change(int old, int new, short events) {
 	}
 	sockets[socket_index].fd = new;
 	sockets[socket_index].events = events;
+}
+
+bool recognised_itemtype(char itemtype) {
+	return (
+		itemtype == '0' || // Text file
+		itemtype == '1' || // Gopher directory listing
+		itemtype == '4' || // BinHex archive
+		itemtype == '5' || // Binary archive
+		itemtype == '6' || // UUEncoded file
+		itemtype == '9' || // Binary file
+		itemtype == 'g' || // GIF image
+		itemtype == 'h' || // HTML document
+		itemtype == 'I' || // Image (generic)
+		itemtype == 's' // Sound
+	);
+}
+
+void get_itemtype_selector(char *itemtype, char **selector, size_t *selector_length, const char *path, size_t path_length) {
+	const char *start = path;
+	size_t left = path_length;
+
+	// Ignore a / on the beginning of path
+	if(left > 0 && start[0] == '/') {
+		start++;
+		left--;
+	}
+
+	// If we recognise the first character of path as itemtype -> save it as itemtype and move selector's beginning one forward
+	// If not, set itemtype to default itemtype and don't move beginning of selector
+	if(left >= 1 && recognised_itemtype(start[0])) {
+		*itemtype = path[0];
+		start++;
+		left--;
+	} else {
+		*itemtype = default_itemtype;
+	}
+
+	// Create a new buffer and copy selector to it
+	*selector = memdup(start, left);
+	*selector_length = left;
+}
+
+const char *get_mimetype(char itemtype, const char *selector, size_t selector_length) {
+	// Special handling for itemtypes I and s
+	if(itemtype == 'I' || itemtype == 's') {
+		const char *extension = memrchr(selector, '.', selector_length);
+		if(extension == NULL) {
+			// There is no extension, everything is a lie
+			return default_mimetype;
+		}
+
+		for(size_t i = 0; i < sizeof(extension_mimetypes) / sizeof(*extension_mimetypes); i++) {
+			if(strcmp(extension, extension_mimetypes[i].ext) == 0) {
+				return extension_mimetypes[i].mimetype;
+			}
+		}
+
+		// Unrecognised extension
+		return default_mimetype;
+	}
+
+	for(size_t i = 0; i < sizeof(mimetypes) / sizeof(*mimetypes); i++) {
+		if(itemtype == mimetypes[i].itemtype) {
+			return mimetypes[i].mimetype;
+		}
+	}
+
+	// Nothing matched
+	return default_mimetype;
+}
+
+
+enum copymode get_copymode(char itemtype) {
+	if(itemtype == '1') { // Gopher directory listing
+		return GOPHERMAP;
+	} else if(itemtype == '0' || itemtype == '4' || itemtype == '6' || itemtype == 'h') { // Text file, UUEncoded file, HTML document
+		return TEXT;
+	} else {
+		return BINARY;
+	}
 }
 
 void handle_connection(size_t index) {
@@ -430,23 +551,26 @@ void handle_connection(size_t index) {
 	}
 
 	if(conn->state == CONNECT) {
-			// Allocate a fixed buffer for data copying
-			conn->buffer = malloc(1024);
-			if(conn->buffer == NULL) {
-				perror("malloc");
-			}
-			conn->buffer_size = 1024;
-
 			// Connect to remote and change it to our main socket
 			size_t remote_socket = connect_to_remote();
 			conn->sock_other = conn->sock;
 			conn->sock = remote_socket;
 
 			// Change socket in the table of sockets
-			socket_change(conn->sock_other, conn->sock, POLLOUT);
+			socket_change(conn->sock_other, remote_socket, POLLOUT);
 
-			// Append \r\n to conn->path to make it a valid selector
-			buffer_append(&conn->path, &conn->path_size, "\r\n", 2);
+			// Separate itemtype and selector
+			char *path;
+			size_t path_size;
+			get_itemtype_selector(&conn->itemtype, &path, &path_size, conn->path, conn->path_size);
+			free(conn->path);
+			conn->path = path;
+			conn->path_size = path_size;
+
+			// Put conn->path to conn->buffer and append \r\n to it to create a valid request
+			conn->buffer = memdup(conn->path, conn->path_size);
+			conn->buffer_size = conn->path_size;
+			buffer_append(&conn->buffer, &conn->buffer_size, "\r\n", 2);
 
 			conn->state = REQUEST_WRITE;
 			// Do not continue onwards to REQUEST_WRITE's code, because we changed the socket mid-function and REQUEST_WRITE's code assumes function got called with POLLOUT revent
@@ -454,8 +578,8 @@ void handle_connection(size_t index) {
 	}
 
 	if(conn->state == REQUEST_WRITE) {
-		char *start = conn->path + conn->written;
-		size_t left = conn->path_size - conn->written;
+		char *start = conn->buffer + conn->written;
+		size_t left = conn->buffer_size - conn->written;
 		ssize_t amount = send(conn->sock, start, left, 0);
 
 		if(amount == -1) {
@@ -465,14 +589,71 @@ void handle_connection(size_t index) {
 
 		conn->written += amount;
 
-		if(conn->written >= conn->path_size) {
-			// Completely remove the path
-			free(conn->path);
-			conn->path = NULL;
-			conn->path_size = 0;
+		if(conn->written >= conn->buffer_size) {
+			// Completely remove the old buffer containig the request
+			free(conn->buffer);
+			conn->buffer = NULL;
+			conn->buffer_size = 0;
 
-			// Change socket to read mode
-			socket_change(conn->sock, conn->sock, POLLIN);
+			// Create new buffer with HTTP response
+			const char *mimetype = get_mimetype(conn->itemtype, conn->path, conn->path_size);
+			char *response;
+			int response_size = asprintf(&response, "HTTP/1.1 200 OK\r\nContent-type: %s\r\n\r\n", mimetype);
+			if(response_size < 0) {
+				perror("asprintf");
+				exit(1);
+			}
+			conn->buffer = response;
+			conn->buffer_size = response_size;
+
+			// Set amount written to 0
+			conn->written = 0;
+
+			// Switch socket and change to write mode
+			switch_sockets(conn);
+			socket_change(conn->sock_other, conn->sock, POLLOUT);
+
+			conn->state = HEADER_WRITE;
+			// Return because socket was changed
+			return;
+		}
+	}
+
+	if(conn->state == HEADER_WRITE) {
+		char *start = conn->buffer + conn->written;
+		size_t left = conn->buffer_size - conn->written;
+		ssize_t amount = send(conn->sock, start, left, 0);
+
+		if(amount == -1) {
+			remove_connection(index);
+			return;
+		}
+
+		conn->written += amount;
+
+		if(conn->written >= conn->buffer_size) {
+			// Completely remove the old buffer containig the header
+			free(conn->buffer);
+			conn->buffer = NULL;
+			conn->buffer_size = 0;
+
+			// Allocate a fixed buffer for data copying
+			conn->buffer = malloc(1024);
+			if(conn->buffer == NULL) {
+				perror("malloc");
+				exit(1);
+			}
+			conn->buffer_size = 1024;
+
+			// Set copying mode
+			conn->copymode = get_copymode(conn->itemtype);
+
+			// Set conn->beginning_of_line in case copymode uses that information
+			conn->beginning_of_line = true;
+
+			// Switch socket and change to read mode
+			switch_sockets(conn);
+			socket_change(conn->sock_other, conn->sock, POLLIN);
 
 			conn->state = READ;
 			// Return because socket was changed
@@ -498,12 +679,8 @@ void handle_connection(size_t index) {
 		conn->read = amount;
 		conn->written = 0;
 
-		// Swap sockets
-		int tmp = conn->sock_other;
-		conn->sock_other = conn->sock;
-		conn->sock = tmp;
-
-		// Change socket in the table of sockets to the other
+		// Switch socket and change to write mode
+		switch_sockets(conn);
 		socket_change(conn->sock_other, conn->sock, POLLOUT);
 
 		conn->state = WRITE;
@@ -512,9 +689,48 @@ void handle_connection(size_t index) {
 	}
 	
 	if(conn->state == WRITE) {
-		char *start = conn->buffer + conn->written;
-		size_t left = conn->read - conn->written;
-		ssize_t amount = send(conn->sock, start, left, 0);
+		ssize_t amount;
+
+		if(conn->copymode == GOPHERMAP) {
+			fprintf(stderr, "Gophermap copymode not yet supported, substituting text copymode\n");
+			conn->copymode = TEXT;
+		}
+
+		if(conn->copymode == BINARY) {
+			char *start = conn->buffer + conn->written;
+			size_t left = conn->read - conn->written;
+			amount = send(conn->sock, start, left, 0);
+		} else if(conn->copymode == TEXT) {
+			char *start = conn->buffer + conn->written;
+			size_t max_left = conn->read - conn->written;
+
+			if(conn->beginning_of_line && max_left >= 2 && memcmp(start, "..", 2) == 0) {
+				// Remove the double period in the beginning of line
+				start++;
+				max_left--;
+			} else if(conn->beginning_of_line && max_left >= 3 && memcmp(start, ".\r\n", 3) == 0) {
+				// Close connection
+				remove_connection(index);
+				return;
+			}
+
+			char *end = memchr(start, '\n', max_left);
+
+			size_t left;
+			if(end == NULL) {
+				left = max_left;
+				conn->beginning_of_line = false;
+			} else {
+				// Include the \n in the sent text as well
+				left = end - start + 1;
+				conn->beginning_of_line = true;
+			}
+
+			amount = send(conn->sock, start, left, 0);
+		} else {
+			fprintf(stderr, "%s: Illegal value of conn->copymode: %i", program_name, conn->copymode);
+			exit(1);
+		}
 
 		if(amount == -1) {
 			remove_connection(index);
@@ -524,12 +740,8 @@ void handle_connection(size_t index) {
 		conn->written += amount;
 
 		if(conn->written >= conn->read) {
-			// Swap sockets
-			int tmp = conn->sock_other;
-			conn->sock_other = conn->sock;
-			conn->sock = tmp;
-
-			// Change socket in the table of sockets to the other
+			// Switch socket and change to read mode
+			switch_sockets(conn);
 			socket_change(conn->sock_other, conn->sock, POLLIN);
 
 			conn->state = READ;
@@ -654,6 +866,7 @@ int main(int argc, char **argv) {
 
 					if(connection_index == number_connections) {
 						fprintf(stderr, "%s: socket does not correspond to any connection\n", program_name);
+						exit(1);
 					}
 
 					if(sockets[i].revents & POLLHUP) {
