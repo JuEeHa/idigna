@@ -195,8 +195,6 @@ void remove_connection(size_t index) {
 		free(connections[index]->buffer);
 	}
 
-	printf("all cleaned\n");
-
 	if(index != number_connections - 1) {
 		// The connection was not at the end of the table -> we need to rearrange to allow shrinking of allocation
 		memmove(&connections[index], &connections[number_connections - 1], sizeof(*connections));
