@@ -415,6 +415,12 @@ void get_itemtype_selector(char *itemtype, char **selector, size_t *selector_len
 }
 
 const char *get_mimetype(char itemtype, const char *selector, size_t selector_length) {
+	// Special handling for itemtype 1
+	// Eventually, it will be translated into HTML, but for time being it'll be plain text
+	if(itemtype == '1') {
+		return "text/plain; charset=utf-8";
+	}
+
 	// Special handling for itemtypes I and s
 	if(itemtype == 'I' || itemtype == 's') {
 		const char *extension = memrchr(selector, '.', selector_length);
