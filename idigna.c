@@ -293,7 +293,8 @@ int connect_to_remote(void) {
 
 		// Connect to remote
 		if(connect(sock, res->ai_addr, res->ai_addrlen) == -1) {
-			return -1;
+			close(sock);
+			continue;
 		}
 
 		return sock;
