@@ -3,9 +3,9 @@ PREFIX ?= /usr/local
 EXEC_PREFIX ?= $(PREFIX)
 BINDIR ?= $(DESTDIR)$(EXEC_PREFIX)/bin
 
-CFLAGS ?= -Os -g -Wall -Wextra -pedantic
-CPPFLAGS ?=
-LDFLAGS ?=
+CFLAGS += -Os -g -Wall -Wextra -pedantic
+CPPFLAGS +=
+LDFLAGS +=
 
 all: idigna
 
