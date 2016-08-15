@@ -402,7 +402,7 @@ void get_itemtype_selector(char *itemtype, char **selector, size_t *selector_len
 	// If we recognise the first character of path as itemtype -> save it as itemtype and move selector's beginning one forward
 	// If not, set itemtype to default itemtype and don't move beginning of selector
 	if(left >= 1 && recognised_itemtype(start[0])) {
-		*itemtype = path[0];
+		*itemtype = start[0];
 		start++;
 		left--;
 	} else {
