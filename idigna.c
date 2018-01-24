@@ -864,8 +864,6 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	printf("%s %s\n", remote, remote_port_string);
-
 	// Populate the table of sockets with all possible sockets to listen on
 	setup_listen(server_port);
 
