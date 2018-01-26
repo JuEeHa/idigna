@@ -853,6 +853,7 @@ int main(int argc, char **argv) {
 				break;;
 
 			case 'd': // Daemonize
+				use_syslog = true;
 				if((child = fork()) < 0) {
 					perror("fork");
 					exit(1);
