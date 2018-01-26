@@ -879,8 +879,8 @@ int main(int argc, char **argv) {
 				for(fd = sysconf(_SC_OPEN_MAX); fd > 0; --fd) {
 					close(fd);
 				}
-				stdin=fopen("/dev/null", "r");
-				stderr=stdout=fopen("/dev/null", "w+");
+				stdin = fopen("/dev/null", "r");
+				stderr = stdout = fopen("/dev/null", "w+");
 				break;;
 
 			case 'p':
