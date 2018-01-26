@@ -85,7 +85,7 @@ void help(FILE *stream) {
 	usage(stream);
 }
 
-void stubbs_mcerror(const char * restrict format, ...) {
+void log_error(const char * restrict format, ...) {
 	va_list args;
 	va_start(args, format);
 	if(use_syslog) {
@@ -199,7 +199,7 @@ void remove_connection(size_t index) {
 	// Clean the connection up
 	size_t socket_index = get_socket_index(connections[index]->sock);
 	if(socket_index == number_sockets) {
-		stubbs_mcerror("%s: socket to remove not in table of sockets\n", program_name);
+		log_error("%s: socket to remove not in table of sockets\n", program_name);
 		exit(1);
 	}
 	remove_socket(socket_index);
@@ -286,7 +286,7 @@ void setup_listen(unsigned long port) {
 
 	// getaddrinfo wants port as a string, so stringify it
 	if(!stringify_port(port, port_string, sizeof(port_string))) {
-		stubbs_mcerror("%s: Could not convert %li to string\n", program_name, port);
+		log_error("%s: Could not convert %li to string\n", program_name, port);
 		exit(1);
 	}
 
@@ -305,7 +305,7 @@ void setup_listen(unsigned long port) {
 	int status = getaddrinfo(NULL, port_string, &hints, &getaddrinfo_result);
 
 	if(status != 0) {
-		stubbs_mcerror("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
+		log_error("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
 		exit(1);
 	}
 
@@ -333,7 +333,7 @@ int connect_to_remote(void) {
 	int status = getaddrinfo(remote, remote_port_string, &hints, &getaddrinfo_result);
 
 	if(status != 0) {
-		stubbs_mcerror("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
+		log_error("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
 		exit(1);
 	}
 
@@ -388,7 +388,7 @@ void switch_sockets(struct connection *conn) {
 void socket_change(int old, int new, short events) {
 	size_t socket_index = get_socket_index(old);
 	if(socket_index == number_sockets) {
-		stubbs_mcerror("%s: socket requested is not in list of sockets\n", program_name);
+		log_error("%s: socket requested is not in list of sockets\n", program_name);
 		exit(1);
 	}
 	sockets[socket_index].fd = new;
@@ -731,7 +731,7 @@ void handle_connection(size_t index) {
 		ssize_t skipped = 0;
 
 		if(conn->copymode == GOPHERMAP) {
-			stubbs_mcerror("Gophermap copymode not yet supported, substituting text copymode\n");
+			log_error("Gophermap copymode not yet supported, substituting text copymode\n");
 			conn->copymode = TEXT;
 		}
 
@@ -768,7 +768,7 @@ void handle_connection(size_t index) {
 
 			amount = send(conn->sock, start, left, 0);
 		} else {
-			stubbs_mcerror("%s: Illegal value of conn->copymode: %i", program_name, conn->copymode);
+			log_error("%s: Illegal value of conn->copymode: %i", program_name, conn->copymode);
 			exit(1);
 		}
 
@@ -809,7 +809,7 @@ void drop_privileges(void) {
 int main(int argc, char **argv) {
 	// Store proram name for later use
 	if(argc < 1) {
-		stubbs_mcerror("Missing program name\n");
+		log_error("Missing program name\n");
 		exit(1);
 	} else {
 		char *argv0 = strdup(argv[0]);
@@ -915,7 +915,7 @@ int main(int argc, char **argv) {
 
 	// getaddrinfo wants port as a string, so stringify it
 	if(!stringify_port(remote_port, remote_port_string, sizeof(remote_port_string))) {
-		stubbs_mcerror("%s: Could not convert %li to string\n", program_name, remote_port);
+		log_error("%s: Could not convert %li to string\n", program_name, remote_port);
 		exit(1);
 	}
 
@@ -954,7 +954,7 @@ int main(int argc, char **argv) {
 					size_t connection_index = get_connection_index(sockets[i].fd);
 
 					if(connection_index == number_connections) {
-						stubbs_mcerror("%s: socket does not correspond to any connection\n", program_name);
+						log_error("%s: socket does not correspond to any connection\n", program_name);
 						exit(1);
 					}
 
