@@ -147,6 +147,7 @@ size_t get_socket_index(int sock) {
 	// None found, return index of last element + 1
 	return number_sockets;
 }
+
 void add_connection(int sock) {
 	// Grow the table of connections
 	size_t index = number_connections++;
