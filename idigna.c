@@ -3,6 +3,11 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <syslog.h>
+#include <stdarg.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <libgen.h>
 #include <string.h>
 #include <sys/types.h>
@@ -70,13 +75,27 @@ struct connection {
 
 struct connection **connections = NULL;
 size_t number_connections = 0;
+bool use_syslog = false;
 
 void usage(FILE *stream) {
-	fprintf(stream, "%s [--port|-p server_port] remote [remote_port]\n", program_name);
+	fprintf(stream, "%s [--daemon|-d] [--port|-p server_port] remote [remote_port]\n", program_name);
 }
 
 void help(FILE *stream) {
 	usage(stream);
+}
+
+void log_error(const char * restrict format, ...) {
+	va_list args;
+	va_start(args, format);
+	if(use_syslog) {
+		vsyslog(LOG_ERR, format, args);
+	} else {
+		vfprintf(stderr, format, args);
+	}
+	va_end(args);
+
+	return;
 }
 
 long int parse_port(const char *string) {
@@ -147,6 +166,7 @@ size_t get_socket_index(int sock) {
 	// None found, return index of last element + 1
 	return number_sockets;
 }
+
 void add_connection(int sock) {
 	// Grow the table of connections
 	size_t index = number_connections++;
@@ -179,7 +199,7 @@ void remove_connection(size_t index) {
 	// Clean the connection up
 	size_t socket_index = get_socket_index(connections[index]->sock);
 	if(socket_index == number_sockets) {
-		fprintf(stderr, "%s: socket to remove not in table of sockets\n", program_name);
+		log_error("%s: socket to remove not in table of sockets\n", program_name);
 		exit(1);
 	}
 	remove_socket(socket_index);
@@ -266,7 +286,7 @@ void setup_listen(unsigned long port) {
 
 	// getaddrinfo wants port as a string, so stringify it
 	if(!stringify_port(port, port_string, sizeof(port_string))) {
-		fprintf(stderr, "%s: Could not convert %li to string\n", program_name, port);
+		log_error("%s: Could not convert %li to string\n", program_name, port);
 		exit(1);
 	}
 
@@ -285,7 +305,7 @@ void setup_listen(unsigned long port) {
 	int status = getaddrinfo(NULL, port_string, &hints, &getaddrinfo_result);
 
 	if(status != 0) {
-		fprintf(stderr, "%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
+		log_error("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
 		exit(1);
 	}
 
@@ -313,7 +333,7 @@ int connect_to_remote(void) {
 	int status = getaddrinfo(remote, remote_port_string, &hints, &getaddrinfo_result);
 
 	if(status != 0) {
-		fprintf(stderr, "%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
+		log_error("%s: getaddrinfo failed: %s\n", program_name, gai_strerror(status));
 		exit(1);
 	}
 
@@ -368,7 +388,7 @@ void switch_sockets(struct connection *conn) {
 void socket_change(int old, int new, short events) {
 	size_t socket_index = get_socket_index(old);
 	if(socket_index == number_sockets) {
-		fprintf(stderr, "%s: socket requested is not in list of sockets\n", program_name);
+		log_error("%s: socket requested is not in list of sockets\n", program_name);
 		exit(1);
 	}
 	sockets[socket_index].fd = new;
@@ -711,7 +731,7 @@ void handle_connection(size_t index) {
 		ssize_t skipped = 0;
 
 		if(conn->copymode == GOPHERMAP) {
-			fprintf(stderr, "Gophermap copymode not yet supported, substituting text copymode\n");
+			log_error("Gophermap copymode not yet supported, substituting text copymode\n");
 			conn->copymode = TEXT;
 		}
 
@@ -748,7 +768,7 @@ void handle_connection(size_t index) {
 
 			amount = send(conn->sock, start, left, 0);
 		} else {
-			fprintf(stderr, "%s: Illegal value of conn->copymode: %i", program_name, conn->copymode);
+			log_error("%s: Illegal value of conn->copymode: %i", program_name, conn->copymode);
 			exit(1);
 		}
 
@@ -789,7 +809,7 @@ void drop_privileges(void) {
 int main(int argc, char **argv) {
 	// Store proram name for later use
 	if(argc < 1) {
-		fprintf(stderr, "Missing program name\n");
+		log_error("Missing program name\n");
 		exit(1);
 	} else {
 		char *argv0 = strdup(argv[0]);
@@ -809,12 +829,16 @@ int main(int argc, char **argv) {
 	struct option long_options[] = {
 		{"help", no_argument, 0, 0},
 		{"port", required_argument, 0, 'p'},
+		{"daemon", no_argument, 0, 'd'},
 		{0, 0, 0, 0}
 	};
 
 	for(;;) {
 		int long_option_index;
-		int opt = getopt_long(argc, argv, "p:", long_options, &long_option_index);
+		int opt = getopt_long(argc, argv, "dp:", long_options, &long_option_index);
+		// Used for daemonization
+		pid_t child;
+		int fd;
 
 		if(opt == -1) {
 			break;
@@ -826,6 +850,37 @@ int main(int argc, char **argv) {
 					help(stdout);
 					exit(0);
 				}
+				break;;
+
+			case 'd': // Daemonize
+				use_syslog = true;
+				if((child = fork()) < 0) {
+					perror("fork");
+					exit(1);
+				}
+				if(child > 0) {
+					exit(0);
+				}
+				if(setsid() < 0) {
+					perror("setsid");
+					exit(1);
+				}
+				signal(SIGCHLD, SIG_IGN);
+				signal(SIGHUP, SIG_IGN);
+				if((child = fork()) < 0) {
+					perror("fork");
+					exit(1);
+				}
+				if(child > 0) {
+					exit(0);
+				}
+				umask(0);
+				chdir("/");
+				for(fd = sysconf(_SC_OPEN_MAX); fd > 0; --fd) {
+					close(fd);
+				}
+				stdin = fopen("/dev/null", "r");
+				stderr = stdout = fopen("/dev/null", "w+");
 				break;;
 
 			case 'p':
@@ -860,7 +915,7 @@ int main(int argc, char **argv) {
 
 	// getaddrinfo wants port as a string, so stringify it
 	if(!stringify_port(remote_port, remote_port_string, sizeof(remote_port_string))) {
-		fprintf(stderr, "%s: Could not convert %li to string\n", program_name, remote_port);
+		log_error("%s: Could not convert %li to string\n", program_name, remote_port);
 		exit(1);
 	}
 
@@ -899,7 +954,7 @@ int main(int argc, char **argv) {
 					size_t connection_index = get_connection_index(sockets[i].fd);
 
 					if(connection_index == number_connections) {
-						fprintf(stderr, "%s: socket does not correspond to any connection\n", program_name);
+						log_error("%s: socket does not correspond to any connection\n", program_name);
 						exit(1);
 					}
 
